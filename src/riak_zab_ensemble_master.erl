@@ -23,7 +23,7 @@
 -record(state, {esize :: pos_integer(),
                 quorum :: pos_integer(),
                 ringhash :: binary(),
-                ensembles :: tid(),
+                ensembles :: ets:tid(),
                 metabc :: term()}).
 
 -define(BC, riak_zab_bitcask_backend).
