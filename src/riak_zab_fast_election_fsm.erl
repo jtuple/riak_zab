@@ -124,38 +124,39 @@ finish_election(State=#state{proposed=Elected, parent=Parent, epoch=Epoch}) ->
 
 %% @private
 handle_vote(Vote=#vote{from=Peer, epoch=PeerEpoch},
-            State=#state{proposed=Proposed, epoch=Epoch, ensemble=Ens}) ->
-    if
-        PeerEpoch < Epoch ->
-            %% Ignore vote from previous election and respond with proposal.
-            ?DOUT("Ignoring old vote~n", []),
-            riak_zab_peer:election_event(Ens, Peer, Proposed),
-            continue_looking(State);
-        PeerEpoch > Epoch ->
-            %% Fast forward to more recent election.
-            ?DOUT("Fast forwarding to new epoch~n", []),
-            {_Changed, Proposed2} = update_proposed(Proposed, Vote),
-            Proposed3 = Proposed2#vote{epoch=PeerEpoch},
-            State2 = State#state{epoch=PeerEpoch,
-                                 proposed=Proposed3,
-                                 votes=dict:new()},
-            send_notifications(State2),
-            add_vote(Vote, State2);
-        PeerEpoch == Epoch ->
-            ?DOUT("Considering vote...~n", []),
-            {Changed, Proposed2} = update_proposed(Proposed, Vote),
-            State2 = State#state{proposed=Proposed2},
-            %% Send notifications if vote has changed
-            case Changed of
-                true ->
-                    ?DOUT("Vote changed~p~n", [Proposed2]),
-                    send_notifications(State2);
-                false ->
-                    ?DOUT("Vote didn't change~n", []),
-                    true
-            end,
-            add_vote(Vote, State2)
-    end.
+            State=#state{proposed=Proposed, epoch=Epoch, ensemble=Ens}) when (PeerEpoch < Epoch) ->
+    %% Ignore vote from previous election and respond with proposal.
+    ?DOUT("Ignoring old vote~n", []),
+    riak_zab_peer:election_event(Ens, Peer, Proposed),
+    continue_looking(State);
+
+handle_vote(Vote=#vote{from=Peer, epoch=PeerEpoch},
+            State=#state{proposed=Proposed, epoch=Epoch, ensemble=Ens}) when (PeerEpoch > Epoch) ->
+    %% Fast forward to more recent election.
+    ?DOUT("Fast forwarding to new epoch~n", []),
+    {_Changed, Proposed2} = update_proposed(Proposed, Vote),
+    Proposed3 = Proposed2#vote{epoch=PeerEpoch},
+    State2 = State#state{epoch=PeerEpoch,
+                         proposed=Proposed3,
+                         votes=dict:new()},
+    send_notifications(State2),
+    add_vote(Vote, State2);
+
+handle_vote(Vote=#vote{from=Peer, epoch=PeerEpoch},
+    State=#state{proposed=Proposed, epoch=Epoch, ensemble=Ens}) ->
+    ?DOUT("Considering vote...~n", []),
+    {Changed, Proposed2} = update_proposed(Proposed, Vote),
+    State2 = State#state{proposed=Proposed2},
+    %% Send notifications if vote has changed
+    case Changed of
+        true ->
+            ?DOUT("Vote changed~p~n", [Proposed2]),
+            send_notifications(State2);
+        false ->
+            ?DOUT("Vote didn't change~n", []),
+            true
+    end,
+    add_vote(Vote, State2).
 
 %% @private
 add_vote(Vote, State=#state{votes=Votes, ensemble=Ens, proposed=Proposed}) ->
@@ -177,30 +178,30 @@ add_vote(Vote, State=#state{votes=Votes, ensemble=Ens, proposed=Proposed}) ->
     end.
 
 %% @private
-handle_outofelection(Vote, State) when Vote#vote.epoch == State#state.epoch ->
-    #vote{from=Peer, state=PeerState, leader=Leader} = Vote,
-    case PeerState of
-        leading ->
-            %% There is at most one leader for each epoch, so if a peer
-            %% claims to be the leader, then it must be the leader. 
-            ?DOUT("Found current leader: ~p~n", [Leader]),
-            State2 = set_proposed(State, Vote),
-            finish_election(State2);
-        _ ->
-            NVotes = dict:store(Peer, Vote, State#state.votes),
-            State2 = State#state{votes=NVotes},
-            HaveQuorum = count_votes(State2, Vote, NVotes),
-            IsLeader = check_leader(State2#state.outofelection, Leader,
-                                    get_id(State)),
-            if
-                HaveQuorum and IsLeader ->
-                    ?DOUT("Found supported leader: ~p~n", [Leader]),
-                    State3 = set_proposed(State2, Vote),
-                    finish_election(State3);
-                true ->
-                    check_outofelection(Vote, State)
-            end
-    end;
+handle_outofelection(Vote=#vote{from=Peer, state=leading, leader=Leader},
+                     State) when Vote#vote.epoch == State#state.epoch ->
+    %% There is at most one leader for each epoch, so if a peer
+    %% claims to be the leader, then it must be the leader. 
+    ?DOUT("Found current leader: ~p~n", [Leader]),
+    State2 = set_proposed(State, Vote),
+    finish_election(State2);
+
+handle_outofelection(Vote=#vote{from=Peer, state=PeerState, leader=Leader},
+                     State) when Vote#vote.epoch == State#state.epoch ->
+	NVotes = dict:store(Peer, Vote, State#state.votes),
+	State2 = State#state{votes=NVotes},
+	HaveQuorum = count_votes(State2, Vote, NVotes),
+	IsLeader = check_leader(State2#state.outofelection, Leader,
+	                        get_id(State)),
+	if
+	    HaveQuorum and IsLeader ->
+	        ?DOUT("Found supported leader: ~p~n", [Leader]),
+	        State3 = set_proposed(State2, Vote),
+	        finish_election(State3);
+	    true ->
+	        check_outofelection(Vote, State)
+	end;
+	
 handle_outofelection(Vote, State) ->
     check_outofelection(Vote, State).
 
